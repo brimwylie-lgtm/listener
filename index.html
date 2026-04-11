@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Listener — Audio Recorder</title>
+<title>Listener — Record & Transcribe</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -18,357 +18,241 @@
     --muted: #888884;
     --accent: #c8f55a;
     --accent-dim: rgba(200,245,90,0.12);
+    --accent-dim2: rgba(200,245,90,0.06);
     --red: #ff5f57;
     --red-dim: rgba(255,95,87,0.1);
     --amber: #f5a623;
+    --blue: #64b4ff;
+    --blue-dim: rgba(100,180,255,0.1);
     --mono: 'DM Mono', monospace;
     --sans: 'DM Sans', sans-serif;
   }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--sans);
-    font-weight: 300;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-  }
+  body { background:var(--bg); color:var(--text); font-family:var(--sans); font-weight:300; min-height:100vh; display:flex; flex-direction:column; }
 
-  .card {
-    width: 100%;
-    max-width: 520px;
-    background: var(--surface);
-    border: 1px solid var(--border2);
-    border-radius: 16px;
-    overflow: hidden;
-  }
+  /* Layout */
+  .app { display:grid; grid-template-columns:300px 1fr; min-height:100vh; }
 
-  .card-header {
-    padding: 1.5rem 2rem 1.25rem;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
+  /* Sidebar */
+  .sidebar { border-right:1px solid var(--border); display:flex; flex-direction:column; }
 
-  .logo {
-    font-family: var(--mono);
-    font-size: 12px;
-    font-weight: 400;
-    letter-spacing: 0.1em;
-    color: var(--accent);
-    text-transform: uppercase;
-  }
+  .sidebar-header { padding:1.25rem 1.5rem; border-bottom:1px solid var(--border); }
+  .logo { font-family:var(--mono); font-size:12px; font-weight:400; letter-spacing:0.1em; color:var(--accent); text-transform:uppercase; }
+  .logo span { color:var(--muted); font-weight:300; }
 
-  .logo span { color: var(--muted); }
+  .panel { padding:1.25rem 1.5rem; border-bottom:1px solid var(--border); }
+  .panel-label { font-family:var(--mono); font-size:9px; letter-spacing:0.12em; text-transform:uppercase; color:var(--muted); margin-bottom:0.875rem; }
 
-  .mode-pills {
-    display: flex;
-    gap: 4px;
-    background: var(--bg);
-    border-radius: 8px;
-    padding: 3px;
-    border: 1px solid var(--border);
-  }
+  /* Mode pills */
+  .pills { display:flex; gap:4px; background:var(--bg); border-radius:8px; padding:3px; border:1px solid var(--border); }
+  .pill { font-family:var(--mono); font-size:10px; letter-spacing:0.05em; flex:1; padding:5px 0; border-radius:5px; border:none; background:transparent; color:var(--muted); cursor:pointer; transition:all 0.15s; text-align:center; }
+  .pill.active { background:var(--surface2); color:var(--text); }
+  .pill:disabled { opacity:0.4; cursor:not-allowed; }
 
-  .pill {
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.05em;
-    padding: 4px 10px;
-    border-radius: 5px;
-    border: none;
-    background: transparent;
-    color: var(--muted);
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .pill.active {
-    background: var(--surface2);
-    color: var(--text);
-  }
-
-  .pill:disabled { opacity: 0.4; cursor: not-allowed; }
-
-  /* Timer display */
-  .timer-area {
-    padding: 2.5rem 2rem 1.5rem;
-    text-align: center;
-  }
-
-  .timer {
-    font-family: var(--mono);
-    font-size: 56px;
-    font-weight: 300;
-    letter-spacing: 0.04em;
-    color: var(--muted);
-    transition: color 0.3s;
-    line-height: 1;
-    margin-bottom: 1rem;
-  }
-
-  .timer.active { color: var(--text); }
+  /* Timer */
+  .timer { font-family:var(--mono); font-size:42px; font-weight:300; letter-spacing:0.04em; color:var(--muted); text-align:center; padding:1rem 0 0.5rem; transition:color 0.3s; line-height:1; }
+  .timer.active { color:var(--text); }
 
   /* Waveform */
-  .waveform {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    height: 40px;
-    margin-bottom: 1rem;
-  }
+  .waveform { display:flex; align-items:center; justify-content:center; gap:3px; height:36px; margin:6px 0; }
+  .wbar { width:3px; background:var(--border2); border-radius:2px; height:4px; transition:height 0.07s ease; }
+  .waveform.active .wbar { background:var(--red); }
 
-  .wbar {
-    width: 3px;
-    background: var(--border2);
-    border-radius: 2px;
-    height: 4px;
-    transition: height 0.07s ease;
-  }
+  .status { font-family:var(--mono); font-size:10px; letter-spacing:0.04em; color:var(--muted); text-align:center; min-height:15px; margin-bottom:10px; }
 
-  .waveform.active .wbar { background: var(--red); }
-
-  .status {
-    font-family: var(--mono);
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-    min-height: 16px;
-  }
-
-  /* Big record button */
-  .btn-record {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    width: calc(100% - 4rem);
-    margin: 0 2rem 1.5rem;
-    padding: 16px;
-    border-radius: 12px;
-    border: 1px solid var(--accent);
-    background: var(--accent-dim);
-    color: var(--accent);
-    font-family: var(--mono);
-    font-size: 13px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .btn-record:hover { background: rgba(200,245,90,0.2); }
-
-  .btn-record.recording {
-    border-color: var(--red);
-    background: var(--red-dim);
-    color: var(--red);
-  }
-
-  .btn-record.recording:hover { background: rgba(255,95,87,0.18); }
-
-  .rdot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: currentColor;
-    flex-shrink: 0;
-  }
-
-  .btn-record.recording .rdot { animation: pulse 1s ease-in-out infinite; }
-
+  /* Record button */
+  .btn-record { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; padding:14px; border-radius:10px; border:1px solid var(--accent); background:var(--accent-dim); color:var(--accent); font-family:var(--mono); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; cursor:pointer; transition:all 0.15s; }
+  .btn-record:hover { background:rgba(200,245,90,0.2); }
+  .btn-record.on { border-color:var(--red); background:var(--red-dim); color:var(--red); }
+  .btn-record.on:hover { background:rgba(255,95,87,0.18); }
+  .rdot { width:8px; height:8px; border-radius:50%; background:currentColor; flex-shrink:0; }
+  .btn-record.on .rdot { animation:pulse 1s ease-in-out infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.25} }
 
+  /* API key */
+  .key-row { display:flex; gap:6px; align-items:center; }
+  .key-input { flex:1; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--mono); font-size:11px; padding:7px 10px; outline:none; transition:border-color 0.15s; min-width:0; }
+  .key-input:focus { border-color:var(--border2); }
+  .key-input::placeholder { color:var(--muted); }
+  .key-save { font-family:var(--mono); font-size:10px; padding:7px 10px; border-radius:6px; border:1px solid var(--border2); background:transparent; color:var(--muted); cursor:pointer; transition:all 0.15s; white-space:nowrap; }
+  .key-save:hover { color:var(--accent); border-color:rgba(200,245,90,0.3); }
+  .key-status { font-family:var(--mono); font-size:10px; color:var(--muted); margin-top:6px; min-height:14px; }
+  .key-status.ok { color:var(--accent); }
+
   /* Recordings list */
-  .recordings-area {
-    border-top: 1px solid var(--border);
-    padding: 1.25rem 2rem;
-  }
+  .recs-area { flex:1; overflow-y:auto; padding:1.25rem 1.5rem; }
+  .empty-recs { font-size:12px; color:var(--muted); }
 
-  .area-label {
-    font-family: var(--mono);
-    font-size: 9px;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--muted);
-    margin-bottom: 0.875rem;
-  }
+  .rec-item { background:var(--bg); border:1px solid var(--border); border-radius:8px; margin-bottom:8px; overflow:hidden; transition:border-color 0.15s; }
+  .rec-item:hover { border-color:var(--border2); }
+  .rec-top { display:flex; align-items:center; gap:10px; padding:10px 12px; }
+  .rec-icon { width:30px; height:30px; border-radius:7px; background:var(--red-dim); border:1px solid rgba(255,95,87,0.15); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .rec-icon-dot { width:8px; height:8px; border-radius:50%; background:var(--red); }
+  .rec-info { flex:1; min-width:0; }
+  .rec-name { font-size:12px; font-weight:400; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:2px; }
+  .rec-meta { font-family:var(--mono); font-size:9px; color:var(--muted); }
+  .rec-btns { display:flex; gap:5px; }
+  .btn-xs { padding:5px 10px; border-radius:5px; border:1px solid var(--border2); background:transparent; color:var(--muted); font-family:var(--mono); font-size:9px; letter-spacing:0.04em; cursor:pointer; transition:all 0.15s; white-space:nowrap; }
+  .btn-xs:hover { color:var(--text); background:var(--surface); }
+  .btn-xs.go { color:var(--accent); border-color:rgba(200,245,90,0.25); }
+  .btn-xs.go:hover { background:var(--accent-dim); }
+  .btn-xs:disabled { opacity:0.35; cursor:not-allowed; }
+  .btn-xs:disabled:hover { color:var(--muted); background:transparent; }
 
-  .empty-recs {
-    font-size: 12px;
-    color: var(--muted);
-    padding: 0.5rem 0;
-  }
+  /* Main content area */
+  .content { display:flex; flex-direction:column; overflow:hidden; }
 
-  .rec-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    margin-bottom: 8px;
-    transition: border-color 0.15s;
-  }
+  .content-header { display:flex; align-items:center; justify-content:space-between; padding:1rem 1.5rem; border-bottom:1px solid var(--border); flex-shrink:0; }
+  .content-title { font-family:var(--mono); font-size:10px; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); }
+  .header-btns { display:flex; gap:8px; }
 
-  .rec-item:hover { border-color: var(--border2); }
+  .btn-sm { padding:6px 14px; border-radius:6px; border:1px solid var(--border2); background:transparent; color:var(--muted); font-family:var(--mono); font-size:10px; letter-spacing:0.06em; text-transform:uppercase; cursor:pointer; transition:all 0.15s; }
+  .btn-sm:hover { color:var(--text); background:var(--surface); }
+  .btn-sm.accent { color:var(--accent); border-color:rgba(200,245,90,0.3); }
+  .btn-sm.accent:hover { background:var(--accent-dim); }
+  .btn-sm:disabled { opacity:0.3; cursor:not-allowed; }
+  .btn-sm:disabled:hover { color:var(--muted); background:transparent; border-color:var(--border2); }
 
-  .rec-icon {
-    width: 34px;
-    height: 34px;
-    border-radius: 8px;
-    background: var(--red-dim);
-    border: 1px solid rgba(255,95,87,0.15);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
+  /* Transcript scroll */
+  .transcript-scroll { flex:1; overflow-y:auto; padding:1.5rem; }
 
-  .rec-icon-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: var(--red);
-  }
+  .empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:12px; color:var(--muted); text-align:center; }
+  .empty-mono { font-family:var(--mono); font-size:32px; opacity:0.15; letter-spacing:0.1em; }
+  .empty-label { font-family:var(--mono); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; }
+  .empty-sub { font-size:12px; max-width:280px; line-height:1.6; }
 
-  .rec-info { flex: 1; min-width: 0; }
+  /* Transcript blocks */
+  .t-block { display:flex; gap:14px; margin-bottom:12px; padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:8px; transition:border-color 0.15s; }
+  .t-block:hover { border-color:var(--border2); }
+  .t-ts { font-family:var(--mono); font-size:10px; color:var(--muted); white-space:nowrap; padding-top:3px; flex-shrink:0; min-width:45px; }
+  .t-speaker { font-family:var(--mono); font-size:10px; padding:2px 8px; border-radius:4px; white-space:nowrap; flex-shrink:0; margin-top:1px; }
+  .sp-1 { background:var(--accent-dim); color:var(--accent); border:1px solid rgba(200,245,90,0.2); }
+  .sp-2 { background:var(--blue-dim); color:var(--blue); border:1px solid rgba(100,180,255,0.2); }
+  .sp-u { background:var(--surface2); color:var(--muted); border:1px solid var(--border); }
+  .t-text { font-size:14px; line-height:1.7; color:var(--text); font-weight:300; }
 
-  .rec-name {
-    font-size: 13px;
-    font-weight: 400;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-bottom: 2px;
-  }
+  /* Processing state */
+  .processing { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:16px; }
+  .proc-bar { width:220px; height:2px; background:var(--border); border-radius:1px; overflow:hidden; }
+  .proc-fill { height:100%; background:var(--accent); border-radius:1px; animation:prog 1.8s ease-in-out infinite; }
+  @keyframes prog { 0%{width:0%;margin-left:0} 50%{width:55%;margin-left:22%} 100%{width:0%;margin-left:100%} }
+  .proc-label { font-family:var(--mono); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); }
 
-  .rec-meta {
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--muted);
-  }
+  /* Toolbar */
+  .toolbar { display:flex; align-items:center; gap:8px; padding:0.875rem 1.5rem; border-top:1px solid var(--border); flex-shrink:0; }
+  .wc { font-family:var(--mono); font-size:10px; color:var(--muted); }
+  .spacer { flex:1; }
 
-  .btn-dl {
-    padding: 6px 14px;
-    border-radius: 6px;
-    border: 1px solid var(--border2);
-    background: transparent;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.05em;
-    cursor: pointer;
-    transition: all 0.15s;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
+  /* Steps */
+  .step { display:flex; gap:10px; margin-bottom:8px; align-items:flex-start; }
+  .step-n { font-family:var(--mono); font-size:10px; color:var(--accent); background:var(--accent-dim); border:1px solid rgba(200,245,90,0.2); border-radius:4px; width:20px; height:20px; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:1px; }
+  .step-t { font-size:12px; color:var(--muted); line-height:1.6; }
+  .step-t strong { color:var(--text); font-weight:400; }
 
-  .btn-dl:hover { color: var(--accent); border-color: rgba(200,245,90,0.3); background: var(--accent-dim); }
-
-  /* Instructions */
-  .instructions {
-    border-top: 1px solid var(--border);
-    padding: 1.25rem 2rem 1.5rem;
-  }
-
-  .step {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 10px;
-    align-items: flex-start;
-  }
-
-  .step-num {
-    font-family: var(--mono);
-    font-size: 10px;
-    color: var(--accent);
-    background: var(--accent-dim);
-    border: 1px solid rgba(200,245,90,0.2);
-    border-radius: 4px;
-    width: 20px;
-    height: 20px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    margin-top: 1px;
-  }
-
-  .step-text {
-    font-size: 12px;
-    color: var(--muted);
-    line-height: 1.6;
-  }
-
-  .step-text strong { color: var(--text); font-weight: 400; }
+  ::-webkit-scrollbar { width:4px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:var(--border2); border-radius:2px; }
 </style>
 </head>
 <body>
+<div class="app">
 
-<div class="card">
-  <div class="card-header">
-    <div class="logo">Listener <span>/ recorder</span></div>
-    <div class="mode-pills">
-      <button class="pill active" id="pill-tab" onclick="setMode('tab')">Tab</button>
-      <button class="pill" id="pill-mic" onclick="setMode('mic')">Mic</button>
-      <button class="pill" id="pill-both" onclick="setMode('both')">Both</button>
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">Listener <span>/ record + transcribe</span></div>
+    </div>
+
+    <!-- Source mode -->
+    <div class="panel">
+      <div class="panel-label">Audio source</div>
+      <div class="pills">
+        <button class="pill active" id="pill-tab" onclick="setMode('tab')">Tab</button>
+        <button class="pill" id="pill-mic" onclick="setMode('mic')">Mic</button>
+        <button class="pill" id="pill-both" onclick="setMode('both')">Both</button>
+      </div>
+    </div>
+
+    <!-- Timer + record -->
+    <div class="panel">
+      <div class="timer" id="timer">00:00:00</div>
+      <div class="waveform" id="waveform">
+        <div class="wbar"></div><div class="wbar" style="height:7px"></div>
+        <div class="wbar" style="height:13px"></div><div class="wbar" style="height:5px"></div>
+        <div class="wbar" style="height:20px"></div><div class="wbar" style="height:9px"></div>
+        <div class="wbar" style="height:4px"></div><div class="wbar" style="height:17px"></div>
+        <div class="wbar" style="height:11px"></div><div class="wbar" style="height:7px"></div>
+        <div class="wbar" style="height:15px"></div><div class="wbar" style="height:5px"></div>
+        <div class="wbar" style="height:10px"></div><div class="wbar" style="height:3px"></div>
+        <div class="wbar" style="height:8px"></div><div class="wbar" style="height:19px"></div>
+      </div>
+      <div class="status" id="status">ready</div>
+      <button class="btn-record" id="recBtn" onclick="toggleRecord()">
+        <div class="rdot"></div>
+        <span id="recLabel">Start recording</span>
+      </button>
+    </div>
+
+    <!-- Groq API key -->
+    <div class="panel">
+      <div class="panel-label">Groq API key</div>
+      <div class="key-row">
+        <input type="password" class="key-input" id="groqKey" placeholder="gsk_..." autocomplete="off">
+        <button class="key-save" onclick="saveKey()">Save</button>
+      </div>
+      <div class="key-status" id="keyStatus">key not set</div>
+    </div>
+
+    <!-- Recordings list -->
+    <div class="recs-area">
+      <div class="panel-label">Recordings</div>
+      <div id="recList"><div class="empty-recs">No recordings yet</div></div>
+    </div>
+
+    <!-- How to use -->
+    <div class="panel">
+      <div class="panel-label">How to use</div>
+      <div class="step"><div class="step-n">1</div><div class="step-t">Open video in another tab. Choose <strong>Tab</strong> mode above.</div></div>
+      <div class="step"><div class="step-n">2</div><div class="step-t">Hit <strong>Start recording</strong> — share the tab, check <strong>"Share tab audio"</strong></div></div>
+      <div class="step"><div class="step-n">3</div><div class="step-t">Stop when done. Hit <strong>Transcribe</strong> — or <strong>Download</strong> the audio file.</div></div>
+      <div class="step"><div class="step-n">4</div><div class="step-t">Copy transcript and paste into <strong>Claude</strong> for analysis.</div></div>
     </div>
   </div>
 
-  <div class="timer-area">
-    <div class="timer" id="timer">00:00:00</div>
-    <div class="waveform" id="waveform">
-      <div class="wbar"></div><div class="wbar" style="height:7px"></div>
-      <div class="wbar" style="height:13px"></div><div class="wbar" style="height:5px"></div>
-      <div class="wbar" style="height:20px"></div><div class="wbar" style="height:9px"></div>
-      <div class="wbar" style="height:4px"></div><div class="wbar" style="height:17px"></div>
-      <div class="wbar" style="height:11px"></div><div class="wbar" style="height:7px"></div>
-      <div class="wbar" style="height:15px"></div><div class="wbar" style="height:5px"></div>
-      <div class="wbar" style="height:10px"></div><div class="wbar" style="height:3px"></div>
-      <div class="wbar" style="height:8px"></div><div class="wbar" style="height:19px"></div>
+  <!-- Main content -->
+  <div class="content">
+    <div class="content-header">
+      <span class="content-title" id="contentTitle">Transcript</span>
+      <div class="header-btns">
+        <button class="btn-sm" onclick="clearAll()">Clear</button>
+        <button class="btn-sm accent" id="copyBtn" onclick="copyTranscript()" disabled>Copy</button>
+        <button class="btn-sm accent" id="dlBtn" onclick="downloadTranscript()" disabled>Download .txt</button>
+      </div>
     </div>
-    <div class="status" id="status">choose a source and press record</div>
+
+    <div class="transcript-scroll" id="tScroll">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-mono">[ ]</div>
+        <div class="empty-label">No transcript yet</div>
+        <div class="empty-sub">Record audio, then hit Transcribe — or download the file and upload it anywhere</div>
+      </div>
+      <div id="tBlocks" style="display:none;"></div>
+      <div class="processing" id="procState" style="display:none;">
+        <div class="proc-bar"><div class="proc-fill"></div></div>
+        <div class="proc-label" id="procLabel">Sending to Groq...</div>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <span class="wc" id="wcLabel"></span>
+      <div class="spacer"></div>
+      <span style="font-family:var(--mono);font-size:10px;color:var(--muted);">Groq Whisper — free tier</span>
+    </div>
   </div>
 
-  <button class="btn-record" id="recBtn" onclick="toggleRecord()">
-    <div class="rdot"></div>
-    <span id="recLabel">Start recording</span>
-  </button>
-
-  <div class="recordings-area">
-    <div class="area-label">Recordings</div>
-    <div id="recList"><div class="empty-recs">No recordings yet</div></div>
-  </div>
-
-  <div class="instructions">
-    <div class="area-label">How to use</div>
-    <div class="step">
-      <div class="step-num">1</div>
-      <div class="step-text">Select <strong>Tab</strong> for webinars or replays — open the video in another Chrome tab first</div>
-    </div>
-    <div class="step">
-      <div class="step-num">2</div>
-      <div class="step-text">Hit <strong>Start recording</strong>, then pick the tab in Chrome's share dialog. Check <strong>"Share tab audio"</strong></div>
-    </div>
-    <div class="step">
-      <div class="step-num">3</div>
-      <div class="step-text">When done, hit <strong>Stop</strong> and download the file</div>
-    </div>
-    <div class="step">
-      <div class="step-num">4</div>
-      <div class="step-text">Drag the file into <strong>Claude</strong> and ask for a transcript — works at any playback speed</div>
-    </div>
-  </div>
 </div>
 
 <script>
+// ── State ─────────────────────────────────────────────────────────────
 let recorder = null;
 let chunks = [];
 let recording = false;
@@ -379,18 +263,39 @@ let analyser = null;
 let animFr = null;
 let streams = [];
 let mode = 'tab';
-let recList = [];
+let recList = []; // {name, blob, dur, ext}
+let segments = []; // parsed transcript segments
 
-// Mode switching
+// ── Key management ────────────────────────────────────────────────────
+function saveKey() {
+  const k = document.getElementById('groqKey').value.trim();
+  if (!k) return;
+  localStorage.setItem('groq_key', k);
+  updateKeyStatus();
+}
+
+function updateKeyStatus() {
+  const k = localStorage.getItem('groq_key') || '';
+  const el = document.getElementById('keyStatus');
+  if (k) {
+    el.textContent = 'key saved — ' + k.slice(0,8) + '...';
+    el.classList.add('ok');
+    document.getElementById('groqKey').value = k;
+  } else {
+    el.textContent = 'key not set';
+    el.classList.remove('ok');
+  }
+}
+
+// ── Mode ──────────────────────────────────────────────────────────────
 function setMode(m) {
   if (recording) return;
   mode = m;
-  ['tab','mic','both'].forEach(s => {
-    document.getElementById('pill-'+s).classList.toggle('active', s===m);
-  });
+  ['tab','mic','both'].forEach(s =>
+    document.getElementById('pill-'+s).classList.toggle('active', s===m));
 }
 
-// Timer
+// ── Timer ─────────────────────────────────────────────────────────────
 function fmtTime(ms) {
   const s = Math.floor(ms/1000);
   const h = Math.floor(s/3600);
@@ -412,7 +317,7 @@ function stopTimer() {
   document.getElementById('timer').classList.remove('active');
 }
 
-// Waveform
+// ── Waveform ──────────────────────────────────────────────────────────
 function startWave(stream) {
   try {
     audioCtx = new AudioContext();
@@ -426,160 +331,297 @@ function startWave(stream) {
     function draw() {
       analyser.getByteFrequencyData(data);
       bars.forEach((b,i)=>{
-        const v = (data[Math.floor(i*data.length/bars.length)]||0)/255;
-        b.style.height = Math.max(3, v*34)+'px';
+        const v=(data[Math.floor(i*data.length/bars.length)]||0)/255;
+        b.style.height=Math.max(3,v*32)+'px';
       });
-      animFr = requestAnimationFrame(draw);
+      animFr=requestAnimationFrame(draw);
     }
     draw();
-  } catch(e) {}
+  } catch(e){}
 }
 
 function stopWave() {
-  if (animFr) cancelAnimationFrame(animFr);
+  if(animFr) cancelAnimationFrame(animFr);
   document.getElementById('waveform').classList.remove('active');
   document.querySelectorAll('.wbar').forEach(b=>b.style.height='4px');
-  if (audioCtx) { audioCtx.close().catch(()=>{}); audioCtx=null; }
+  if(audioCtx){audioCtx.close().catch(()=>{});audioCtx=null;}
 }
 
-// Record toggle
+// ── Recording ─────────────────────────────────────────────────────────
 async function toggleRecord() {
   recording ? stopRecording() : await startRecording();
 }
 
 async function startRecording() {
   setStatus('requesting access...');
-  streams = [];
-  chunks = [];
-
+  streams=[]; chunks=[];
   try {
     let finalStream;
-
-    if (mode === 'tab') {
+    if (mode==='tab') {
       const ds = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: { echoCancellation: false, noiseSuppression: false, sampleRate: 44100 }
+        video:true, audio:{echoCancellation:false,noiseSuppression:false,sampleRate:44100}
       });
       ds.getVideoTracks().forEach(t=>t.stop());
-      const audioTracks = ds.getAudioTracks();
-      if (!audioTracks.length) {
-        ds.getTracks().forEach(t=>t.stop());
-        setStatus('no audio detected — did you check "Share tab audio"?');
-        return;
-      }
+      const at = ds.getAudioTracks();
+      if(!at.length){ds.getTracks().forEach(t=>t.stop());setStatus('no tab audio — check "Share tab audio"');return;}
       streams.push(ds);
-      finalStream = new MediaStream(audioTracks);
-
-    } else if (mode === 'mic') {
-      const ms = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 44100 }
-      });
-      streams.push(ms);
-      finalStream = ms;
-
-    } else { // both
-      const [ds, ms] = await Promise.all([
-        navigator.mediaDevices.getDisplayMedia({
-          video: true, audio: { echoCancellation: false, noiseSuppression: false }
-        }),
-        navigator.mediaDevices.getUserMedia({ audio: true })
+      finalStream = new MediaStream(at);
+    } else if(mode==='mic'){
+      const ms = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,sampleRate:44100}});
+      streams.push(ms); finalStream=ms;
+    } else {
+      const [ds,ms] = await Promise.all([
+        navigator.mediaDevices.getDisplayMedia({video:true,audio:{echoCancellation:false,noiseSuppression:false}}),
+        navigator.mediaDevices.getUserMedia({audio:true})
       ]);
       ds.getVideoTracks().forEach(t=>t.stop());
-      streams.push(ds, ms);
-
-      // Merge both streams
+      streams.push(ds,ms);
       const ctx = new AudioContext();
       const dest = ctx.createMediaStreamDestination();
-      if (ds.getAudioTracks().length) {
-        ctx.createMediaStreamSource(new MediaStream(ds.getAudioTracks())).connect(dest);
-      }
+      if(ds.getAudioTracks().length) ctx.createMediaStreamSource(new MediaStream(ds.getAudioTracks())).connect(dest);
       ctx.createMediaStreamSource(ms).connect(dest);
-      finalStream = dest.stream;
-      audioCtx = ctx; // keep reference
+      finalStream=dest.stream; audioCtx=ctx;
     }
 
-    // Pick best mime type
     const mime = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/ogg']
-      .find(t => MediaRecorder.isTypeSupported(t)) || '';
-
-    recorder = new MediaRecorder(finalStream, mime ? {mimeType: mime} : {});
-    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+      .find(t=>MediaRecorder.isTypeSupported(t))||'';
+    recorder = new MediaRecorder(finalStream, mime?{mimeType:mime}:{});
+    recorder.ondataavailable = e=>{if(e.data.size>0)chunks.push(e.data);};
     recorder.onstop = onStop;
     recorder.start(1000);
-
-    recording = true;
-    startTimer();
-    startWave(finalStream);
-    setStatus('recording');
-    setRecUI(true);
-
+    recording=true;
+    startTimer(); startWave(finalStream); setStatus('recording'); setRecUI(true);
   } catch(e) {
     streams.forEach(s=>s.getTracks().forEach(t=>t.stop()));
-    if (e.name === 'NotAllowedError') setStatus('permission denied');
-    else if (e.name === 'AbortError' || e.message?.includes('cancel')) setStatus('share cancelled');
+    if(e.name==='NotAllowedError') setStatus('permission denied');
+    else if(e.name==='AbortError'||e.message?.includes('cancel')) setStatus('share cancelled');
     else setStatus('error: '+e.message);
   }
 }
 
 function stopRecording() {
-  if (recorder && recorder.state !== 'inactive') recorder.stop();
+  if(recorder&&recorder.state!=='inactive') recorder.stop();
   streams.forEach(s=>s.getTracks().forEach(t=>t.stop()));
-  streams = [];
-  recording = false;
-  stopTimer();
-  stopWave();
-  setRecUI(false);
+  streams=[]; recording=false;
+  stopTimer(); stopWave(); setRecUI(false);
 }
 
 function onStop() {
-  if (!chunks.length) { setStatus('no audio captured'); return; }
-
-  const mime = recorder.mimeType || 'audio/webm';
-  const blob = new Blob(chunks, { type: mime });
-  const dur = startTime ? Math.floor((Date.now()-startTime)/1000) : 0;
-  const ext = mime.includes('ogg') ? 'ogg' : 'webm';
-  const name = 'recording_' + new Date().toISOString().slice(0,16).replace('T','_').replace(/:/g,'-');
-
-  recList.unshift({ name, blob, dur, ext, mime });
-  renderList();
-  setStatus('saved — ' + fmtTime(dur*1000) + ' · ' + (blob.size/1024/1024).toFixed(1) + ' MB');
+  if(!chunks.length){setStatus('no audio captured');return;}
+  const mime = recorder.mimeType||'audio/webm';
+  const blob = new Blob(chunks,{type:mime});
+  const dur = startTime?Math.floor((Date.now()-startTime)/1000):0;
+  const ext = mime.includes('ogg')?'ogg':'webm';
+  const name = 'rec_'+new Date().toISOString().slice(0,16).replace('T','_').replace(/:/g,'-');
+  recList.unshift({name,blob,dur,ext,mime});
+  renderRecList();
+  setStatus('saved — '+fmtTime(dur*1000)+' · '+(blob.size/1024/1024).toFixed(1)+' MB');
 }
 
-function renderList() {
+function renderRecList() {
   const el = document.getElementById('recList');
-  if (!recList.length) { el.innerHTML = '<div class="empty-recs">No recordings yet</div>'; return; }
-  el.innerHTML = recList.map((r,i) => `
+  if(!recList.length){el.innerHTML='<div class="empty-recs">No recordings yet</div>';return;}
+  el.innerHTML = recList.map((r,i)=>`
     <div class="rec-item">
-      <div class="rec-icon"><div class="rec-icon-dot"></div></div>
-      <div class="rec-info">
-        <div class="rec-name">${r.name}.${r.ext}</div>
-        <div class="rec-meta">${fmtTime(r.dur*1000)} &nbsp;·&nbsp; ${(r.blob.size/1024/1024).toFixed(1)} MB</div>
+      <div class="rec-top">
+        <div class="rec-icon"><div class="rec-icon-dot"></div></div>
+        <div class="rec-info">
+          <div class="rec-name">${r.name}.${r.ext}</div>
+          <div class="rec-meta">${fmtTime(r.dur*1000)} &nbsp;·&nbsp; ${(r.blob.size/1024/1024).toFixed(1)} MB</div>
+        </div>
+        <div class="rec-btns">
+          <button class="btn-xs" onclick="dlAudio(${i})">Save</button>
+          <button class="btn-xs go" onclick="transcribe(${i})">Transcribe</button>
+        </div>
       </div>
-      <button class="btn-dl" onclick="download(${i})">Download</button>
     </div>
   `).join('');
 }
 
-function download(i) {
-  const r = recList[i];
-  const url = URL.createObjectURL(r.blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = r.name + '.' + r.ext;
-  a.click();
-  setTimeout(()=>URL.revokeObjectURL(url), 2000);
+function dlAudio(i) {
+  const r=recList[i];
+  const url=URL.createObjectURL(r.blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=r.name+'.'+r.ext; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
 }
 
-function setRecUI(on) {
-  const btn = document.getElementById('recBtn');
-  btn.classList.toggle('recording', on);
-  document.getElementById('recLabel').textContent = on ? 'Stop recording' : 'Start recording';
-  ['tab','mic','both'].forEach(s=>{
-    document.getElementById('pill-'+s).disabled = on;
+// ── Transcription via Groq ────────────────────────────────────────────
+async function transcribe(idx) {
+  const key = localStorage.getItem('groq_key')||document.getElementById('groqKey').value.trim();
+  if(!key){
+    alert('Please enter your Groq API key in the sidebar.\n\nGet one free at console.groq.com');
+    return;
+  }
+
+  const rec = recList[idx];
+  showProc('Sending to Groq Whisper...');
+
+  try {
+    // Groq accepts webm/ogg directly — no conversion needed
+    const formData = new FormData();
+    // Use .mp4 extension as a fallback hint — Groq handles webm fine with explicit type
+    const filename = rec.name + (rec.ext==='ogg'?'.ogg':'.webm');
+    formData.append('file', rec.blob, filename);
+    formData.append('model', 'whisper-large-v3-turbo');
+    formData.append('response_format', 'verbose_json');
+    formData.append('timestamp_granularities[]', 'segment');
+    formData.append('language', 'en');
+
+    setProcLabel('Transcribing...');
+
+    const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method:'POST',
+      headers:{'Authorization':'Bearer '+key},
+      body: formData
+    });
+
+    if(!res.ok){
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err.error?.message||'API error '+res.status);
+    }
+
+    const data = await res.json();
+    setProcLabel('Processing...');
+    processTranscript(data);
+
+  } catch(e) {
+    hideProc();
+    setStatus('transcription failed: '+e.message);
+    alert('Transcription error:\n'+e.message);
+  }
+}
+
+function processTranscript(data) {
+  const raw = data.segments||[];
+  segments = raw.map(s=>({
+    start: s.start,
+    end: s.end,
+    text: s.text.trim(),
+    speaker: null
+  }));
+
+  // Simple speaker diarization heuristic based on pauses
+  let spk = 0;
+  segments.forEach((s,i)=>{
+    if(i===0){s.speaker=0;return;}
+    const pause = s.start - segments[i-1].end;
+    if(pause>1.5) spk=(spk+1)%2; // toggle speaker on significant pause
+    s.speaker=spk;
+  });
+
+  renderTranscript();
+  hideProc();
+  updateToolbar();
+}
+
+function fmtSec(s) {
+  const m=Math.floor(s/60), sec=Math.floor(s%60);
+  return String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0');
+}
+
+function renderTranscript() {
+  if(!segments.length){
+    document.getElementById('emptyState').style.display='flex';
+    document.getElementById('tBlocks').style.display='none';
+    return;
+  }
+  document.getElementById('emptyState').style.display='none';
+  document.getElementById('tBlocks').style.display='block';
+
+  document.getElementById('tBlocks').innerHTML = segments.map((s,i)=>`
+    <div class="t-block">
+      <span class="t-ts">${fmtSec(s.start)}</span>
+      <span class="t-speaker ${s.speaker===0?'sp-1':s.speaker===1?'sp-2':'sp-u'}" onclick="labelSpeaker(${s.speaker})" title="Click to name this speaker">
+        Speaker ${s.speaker+1}
+      </span>
+      <span class="t-text">${esc(s.text)}</span>
+    </div>
+  `).join('');
+
+  // Word count
+  const words = segments.reduce((a,s)=>a+s.text.split(/\s+/).length,0);
+  document.getElementById('wcLabel').textContent = words.toLocaleString()+' words · '+segments.length+' segments';
+}
+
+// Speaker labeling — click a badge to rename all instances
+let speakerNames = {};
+function labelSpeaker(spkIdx) {
+  const current = speakerNames[spkIdx]||'Speaker '+(spkIdx+1);
+  const name = prompt('Name for this speaker:', current);
+  if(!name||!name.trim()) return;
+  speakerNames[spkIdx] = name.trim();
+  // Update all badges
+  document.querySelectorAll('.t-speaker').forEach((el,i)=>{
+    if(segments[i]&&segments[i].speaker===spkIdx){
+      el.textContent = name.trim();
+    }
+  });
+  // Update segments for export
+  segments.forEach(s=>{if(s.speaker===spkIdx)s.namedSpeaker=name.trim();});
+}
+
+// ── Export ────────────────────────────────────────────────────────────
+function buildText() {
+  const h = 'Transcript — '+new Date().toLocaleString()+'\n'+'─'.repeat(50)+'\n\n';
+  return h+segments.map(s=>{
+    const spkLabel = s.namedSpeaker || speakerNames[s.speaker] || 'Speaker '+(s.speaker+1);
+    return '['+fmtSec(s.start)+'] '+spkLabel+'\n'+s.text;
+  }).join('\n\n');
+}
+
+function copyTranscript() {
+  navigator.clipboard.writeText(buildText()).then(()=>{
+    const b=document.getElementById('copyBtn');
+    const orig=b.textContent; b.textContent='Copied!';
+    setTimeout(()=>b.textContent=orig,1800);
   });
 }
 
-function setStatus(m) { document.getElementById('status').textContent = m; }
+function downloadTranscript() {
+  const blob=new Blob([buildText()],{type:'text/plain'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download='transcript_'+new Date().toISOString().slice(0,10)+'.txt';
+  a.click(); URL.revokeObjectURL(url);
+}
+
+function clearAll() {
+  segments=[];speakerNames={};
+  document.getElementById('tBlocks').innerHTML='';
+  document.getElementById('tBlocks').style.display='none';
+  document.getElementById('emptyState').style.display='flex';
+  document.getElementById('wcLabel').textContent='';
+  updateToolbar();
+}
+
+function updateToolbar() {
+  const has=segments.length>0;
+  document.getElementById('copyBtn').disabled=!has;
+  document.getElementById('dlBtn').disabled=!has;
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────
+function setRecUI(on) {
+  document.getElementById('recBtn').classList.toggle('on',on);
+  document.getElementById('recLabel').textContent=on?'Stop recording':'Start recording';
+  ['tab','mic','both'].forEach(s=>{document.getElementById('pill-'+s).disabled=on;});
+}
+
+function showProc(label) {
+  document.getElementById('emptyState').style.display='none';
+  document.getElementById('tBlocks').style.display='none';
+  document.getElementById('procState').style.display='flex';
+  document.getElementById('procLabel').textContent=label;
+}
+
+function setProcLabel(l){document.getElementById('procLabel').textContent=l;}
+function hideProc(){document.getElementById('procState').style.display='none';}
+function setStatus(m){document.getElementById('status').textContent=m;}
+function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// ── Init ──────────────────────────────────────────────────────────────
+updateKeyStatus();
 </script>
 </body>
 </html>
