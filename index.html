@@ -127,6 +127,9 @@
   .t-speaker { font-family:var(--mono); font-size:10px; padding:2px 8px; border-radius:4px; white-space:nowrap; flex-shrink:0; margin-top:1px; }
   .sp-1 { background:var(--accent-dim); color:var(--accent); border:1px solid rgba(200,245,90,0.2); }
   .sp-2 { background:var(--blue-dim); color:var(--blue); border:1px solid rgba(100,180,255,0.2); }
+  .sp-3 { background:rgba(255,160,100,0.1); color:#ffa064; border:1px solid rgba(255,160,100,0.2); }
+  .sp-4 { background:rgba(200,100,255,0.1); color:#c864ff; border:1px solid rgba(200,100,255,0.2); }
+  .sp-5 { background:rgba(100,220,180,0.1); color:#64dcb4; border:1px solid rgba(100,220,180,0.2); }
   .sp-u { background:var(--surface2); color:var(--muted); border:1px solid var(--border); }
   .t-text { font-size:14px; line-height:1.7; color:var(--text); font-weight:300; }
 
@@ -202,6 +205,17 @@
       <div class="key-status" id="keyStatus">key not set</div>
     </div>
 
+    <!-- Speaker count -->
+    <div class="panel">
+      <div class="panel-label">Number of speakers</div>
+      <div class="pills">
+        <button class="pill active" id="spk-2" onclick="setSpeakers(2)">2</button>
+        <button class="pill" id="spk-3" onclick="setSpeakers(3)">3</button>
+        <button class="pill" id="spk-4" onclick="setSpeakers(4)">4+</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5;">Set before transcribing. Click any badge to rename speakers.</div>
+    </div>
+
     <!-- Recordings list -->
     <div class="recs-area">
       <div class="panel-label">Recordings</div>
@@ -265,6 +279,16 @@ let streams = [];
 let mode = 'tab';
 let recList = []; // {name, blob, dur, ext}
 let segments = []; // parsed transcript segments
+
+// ── Speaker count ────────────────────────────────────
+let numSpeakers = 2;
+function setSpeakers(n) {
+  numSpeakers = n;
+  [2,3,4].forEach(v => {
+    const el = document.getElementById('spk-'+v);
+    if(el) el.classList.toggle('active', v===n);
+  });
+}
 
 // ── Key management ────────────────────────────────────────────────────
 function saveKey() {
@@ -494,21 +518,45 @@ async function transcribe(idx) {
 
 function processTranscript(data) {
   const raw = data.segments||[];
-  segments = raw.map(s=>({
-    start: s.start,
-    end: s.end,
-    text: s.text.trim(),
-    speaker: null
-  }));
+  if(!raw.length){segments=[];return;}
 
-  // Simple speaker diarization heuristic based on pauses
+  // Step 1: merge Whisper's short fragments into natural speech turns.
+  // A new turn starts when there is a pause of >= 1.2s AND the accumulated
+  // turn is already at least 3 seconds long (avoids splitting mid-breath).
+  const turns = [];
+  let cur = { start: raw[0].start, end: raw[0].end, text: raw[0].text.trim() };
+
+  for(let i=1;i<raw.length;i++){
+    const seg = raw[i];
+    const pause = seg.start - cur.end;
+    const turnLen = cur.end - cur.start;
+
+    if(pause >= 1.2 && turnLen >= 3.0){
+      turns.push({...cur});
+      cur = { start: seg.start, end: seg.end, text: seg.text.trim() };
+    } else {
+      cur.end = seg.end;
+      cur.text += ' ' + seg.text.trim();
+    }
+  }
+  turns.push({...cur});
+
+  // Step 2: assign speakers by toggling on turn boundaries.
+  // Additional rule: very short turns (<2s, likely an "okay" or "right")
+  // inherit the PREVIOUS speaker rather than toggling, since back-channel
+  // acknowledgements don't represent a real speaker change.
   let spk = 0;
-  segments.forEach((s,i)=>{
-    if(i===0){s.speaker=0;return;}
-    const pause = s.start - segments[i-1].end;
-    if(pause>1.5) spk=(spk+1)%2; // toggle speaker on significant pause
-    s.speaker=spk;
+  turns.forEach((t,i)=>{
+    if(i===0){ t.speaker=0; return; }
+    const dur = t.end - t.start;
+    const pause = t.start - turns[i-1].end;
+    if(pause >= 1.2 && dur >= 2.0){
+      spk = (spk+1) % numSpeakers;
+    }
+    t.speaker = spk;
   });
+
+  segments = turns;
 
   renderTranscript();
   hideProc();
@@ -532,8 +580,8 @@ function renderTranscript() {
   document.getElementById('tBlocks').innerHTML = segments.map((s,i)=>`
     <div class="t-block">
       <span class="t-ts">${fmtSec(s.start)}</span>
-      <span class="t-speaker ${s.speaker===0?'sp-1':s.speaker===1?'sp-2':'sp-u'}" onclick="labelSpeaker(${s.speaker})" title="Click to name this speaker">
-        Speaker ${s.speaker+1}
+      <span class="t-speaker sp-${(s.speaker%5)+1}" onclick="labelSpeaker(${s.speaker})" title="Click to name this speaker">
+        ${speakerNames[s.speaker]||'Speaker '+(s.speaker+1)}
       </span>
       <span class="t-text">${esc(s.text)}</span>
     </div>
