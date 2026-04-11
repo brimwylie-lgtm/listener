@@ -205,15 +205,21 @@
       <div class="key-status" id="keyStatus">key not set</div>
     </div>
 
-    <!-- Speaker count -->
+    <!-- Session setup -->
     <div class="panel">
-      <div class="panel-label">Number of speakers</div>
-      <div class="pills">
+      <div class="panel-label">Session setup</div>
+
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">Number of speakers</div>
+      <div class="pills" style="margin-bottom:12px;">
         <button class="pill active" id="spk-2" onclick="setSpeakers(2)">2</button>
         <button class="pill" id="spk-3" onclick="setSpeakers(3)">3</button>
         <button class="pill" id="spk-4" onclick="setSpeakers(4)">4+</button>
       </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5;">Set before transcribing. Click any badge to rename speakers.</div>
+
+      <div id="speakerNameFields"></div>
+
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;margin-top:4px;">Recording description</div>
+      <textarea id="recDescription" placeholder="Paste video description, meeting title, episode summary..." style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--sans);font-size:12px;font-weight:300;padding:8px 10px;outline:none;resize:vertical;min-height:70px;line-height:1.5;" onfocus="this.style.borderColor='var(--border2)'" onblur="this.style.borderColor='var(--border)'"></textarea>
     </div>
 
     <!-- Recordings list -->
@@ -280,14 +286,50 @@ let mode = 'tab';
 let recList = []; // {name, blob, dur, ext}
 let segments = []; // parsed transcript segments
 
-// ── Speaker count ────────────────────────────────────
+// ── Speaker setup ────────────────────────────────────
 let numSpeakers = 2;
+const defaultNames = ['Host','Guest','Speaker 3','Speaker 4'];
+
 function setSpeakers(n) {
   numSpeakers = n;
   [2,3,4].forEach(v => {
     const el = document.getElementById('spk-'+v);
     if(el) el.classList.toggle('active', v===n);
   });
+  renderNameFields();
+}
+
+function renderNameFields() {
+  const container = document.getElementById('speakerNameFields');
+  const count = numSpeakers === 4 ? 4 : numSpeakers;
+  let html = '';
+  for(let i=0;i<count;i++){
+    const saved = speakerNames[i]||'';
+    html += \`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+      <span class="t-speaker sp-\${i+1}" style="cursor:default;min-width:24px;text-align:center;">\${i+1}</span>
+      <input type="text" id="spkName\${i}" value="\${esc(saved)}" placeholder="\${defaultNames[i]||'Speaker '+(i+1)}"
+        style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--sans);font-size:12px;font-weight:300;padding:6px 8px;outline:none;"
+        onfocus="this.style.borderColor='var(--border2)'" onblur="this.style.borderColor='var(--border)'"
+        oninput="updateSpeakerName(\${i}, this.value)">
+    </div>\`;
+  }
+  container.innerHTML = html;
+}
+
+function updateSpeakerName(idx, val) {
+  speakerNames[idx] = val.trim() || defaultNames[idx] || 'Speaker '+(idx+1);
+  // Live update any rendered badges
+  document.querySelectorAll('.t-speaker').forEach((el, i) => {
+    if(segments[i] && segments[i].speaker === idx){
+      el.textContent = speakerNames[idx];
+    }
+  });
+}
+
+function getSpeakerName(idx) {
+  const inputEl = document.getElementById('spkName'+idx);
+  if(inputEl && inputEl.value.trim()) return inputEl.value.trim();
+  return speakerNames[idx] || defaultNames[idx] || 'Speaker '+(idx+1);
 }
 
 // ── Key management ────────────────────────────────────────────────────
@@ -296,6 +338,7 @@ function saveKey() {
   if (!k) return;
   localStorage.setItem('groq_key', k);
   updateKeyStatus();
+renderNameFields();
 }
 
 function updateKeyStatus() {
@@ -580,8 +623,8 @@ function renderTranscript() {
   document.getElementById('tBlocks').innerHTML = segments.map((s,i)=>`
     <div class="t-block">
       <span class="t-ts">${fmtSec(s.start)}</span>
-      <span class="t-speaker sp-${(s.speaker%5)+1}" onclick="labelSpeaker(${s.speaker})" title="Click to name this speaker">
-        ${speakerNames[s.speaker]||'Speaker '+(s.speaker+1)}
+      <span class="t-speaker sp-${(s.speaker%5)+1}" onclick="promptRename(${s.speaker})" title="Click to rename this speaker">
+        ${getSpeakerName(s.speaker)}
       </span>
       <span class="t-text">${esc(s.text)}</span>
     </div>
@@ -594,26 +637,28 @@ function renderTranscript() {
 
 // Speaker labeling — click a badge to rename all instances
 let speakerNames = {};
-function labelSpeaker(spkIdx) {
-  const current = speakerNames[spkIdx]||'Speaker '+(spkIdx+1);
+
+function promptRename(spkIdx) {
+  const current = getSpeakerName(spkIdx);
   const name = prompt('Name for this speaker:', current);
   if(!name||!name.trim()) return;
   speakerNames[spkIdx] = name.trim();
-  // Update all badges
-  document.querySelectorAll('.t-speaker').forEach((el,i)=>{
-    if(segments[i]&&segments[i].speaker===spkIdx){
-      el.textContent = name.trim();
-    }
-  });
-  // Update segments for export
-  segments.forEach(s=>{if(s.speaker===spkIdx)s.namedSpeaker=name.trim();});
+  // Sync back to input field if visible
+  const input = document.getElementById('spkName'+spkIdx);
+  if(input) input.value = name.trim();
+  // Re-render transcript to update all badges
+  renderTranscript();
 }
 
 // ── Export ────────────────────────────────────────────────────────────
 function buildText() {
-  const h = 'Transcript — '+new Date().toLocaleString()+'\n'+'─'.repeat(50)+'\n\n';
+  const desc = document.getElementById('recDescription').value.trim();
+  const speakerList = Array.from({length:numSpeakers},(_, i)=>'  Speaker '+(i+1)+': '+getSpeakerName(i)).join('\n');
+  let h = 'Transcript — '+new Date().toLocaleString()+'\n'+'─'.repeat(50)+'\n';
+  if(desc) h += '\nRecording: '+desc+'\n';
+  h += '\nSpeakers:\n'+speakerList+'\n\n';
   return h+segments.map(s=>{
-    const spkLabel = s.namedSpeaker || speakerNames[s.speaker] || 'Speaker '+(s.speaker+1);
+    const spkLabel = getSpeakerName(s.speaker);
     return '['+fmtSec(s.start)+'] '+spkLabel+'\n'+s.text;
   }).join('\n\n');
 }
@@ -635,7 +680,7 @@ function downloadTranscript() {
 }
 
 function clearAll() {
-  segments=[];speakerNames={};
+  segments=[];speakerNames={};document.getElementById('recDescription').value='';renderNameFields();
   document.getElementById('tBlocks').innerHTML='';
   document.getElementById('tBlocks').style.display='none';
   document.getElementById('emptyState').style.display='flex';
