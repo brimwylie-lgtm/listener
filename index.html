@@ -747,36 +747,48 @@ function processTranscript(data) {
   var raw = data.segments || [];
   if (!raw.length) { segments = []; hideProc(); return; }
 
-  // Merge fragments into natural turns
-  var turns = [];
-  var cur = { start: raw[0].start, end: raw[0].end, text: raw[0].text.trim() };
-  for (var i = 1; i < raw.length; i++) {
-    var seg = raw[i];
-    var pause = seg.start - cur.end;
-    var turnLen = cur.end - cur.start;
-    if (pause >= 1.2 && turnLen >= 3.0) {
-      turns.push(cur);
-      cur = { start: seg.start, end: seg.end, text: seg.text.trim() };
+  // Step 1: assign speakers to each raw Whisper segment.
+  // A speaker change is flagged when pause >= 1.2s AND the incoming
+  // segment is not a very short back-channel (<2s).
+  var spk = 0;
+  for (var i = 0; i < raw.length; i++) {
+    if (i === 0) { raw[i].speaker = 0; continue; }
+    var pause = raw[i].start - raw[i - 1].end;
+    var dur = raw[i].end - raw[i].start;
+    if (pause >= 1.2 && dur >= 2.0 && numSpeakers > 1) {
+      spk = (spk + 1) % numSpeakers;
+    }
+    raw[i].speaker = spk;
+  }
+
+  // Step 2: group segments into paragraph-sized chunks.
+  // A new paragraph starts when:
+  //   (a) the speaker changes, OR
+  //   (b) the current paragraph has >= MAX_SENTENCES sentences, OR
+  //   (c) there is a pause of >= 2.5s (natural topic break)
+  // This keeps timestamps frequent and paragraphs readable.
+  var MAX_SENTENCES = 4;
+  var paragraphs = [];
+  var cur = { start: raw[0].start, end: raw[0].end, text: raw[0].text.trim(), speaker: raw[0].speaker, count: 1 };
+
+  for (var j = 1; j < raw.length; j++) {
+    var seg = raw[j];
+    var speakerChanged = seg.speaker !== cur.speaker;
+    var tooLong = cur.count >= MAX_SENTENCES;
+    var bigPause = (seg.start - cur.end) >= 2.5;
+
+    if (speakerChanged || tooLong || bigPause) {
+      paragraphs.push({ start: cur.start, end: cur.end, text: cur.text, speaker: cur.speaker });
+      cur = { start: seg.start, end: seg.end, text: seg.text.trim(), speaker: seg.speaker, count: 1 };
     } else {
       cur.end = seg.end;
       cur.text += ' ' + seg.text.trim();
+      cur.count++;
     }
   }
-  turns.push(cur);
+  paragraphs.push({ start: cur.start, end: cur.end, text: cur.text, speaker: cur.speaker });
 
-  // Assign speakers — toggle on turn boundaries, skip very short back-channel turns
-  var spk = 0;
-  for (var j = 0; j < turns.length; j++) {
-    if (j === 0) { turns[j].speaker = 0; continue; }
-    var dur = turns[j].end - turns[j].start;
-    var p = turns[j].start - turns[j - 1].end;
-    if (p >= 1.2 && dur >= 2.0 && numSpeakers > 1) {
-      spk = (spk + 1) % numSpeakers;
-    }
-    turns[j].speaker = spk;
-  }
-
-  segments = turns;
+  segments = paragraphs;
   renderTranscript();
   hideProc();
   updateToolbar();
