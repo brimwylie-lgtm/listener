@@ -702,13 +702,13 @@ function dlAudio(i) {
   setTimeout(function() { URL.revokeObjectURL(url); }, 2000);
 }
 
-// ── Transcription ────────────────────────────────────
-// Strategy: slice the raw blob into byte chunks.
-// We calculate bytes-per-second from the file size and duration,
-// then slice at clean boundaries. Each chunk gets a timestamp offset
-// so the final merged transcript runs continuously from 0:00.
-// Max chunk size is 20MB — comfortably under Groq's 25MB hard limit.
-var MAX_CHUNK_MB = 20 * 1024 * 1024;
+// ── Transcription ────────────────────────────────────────────────────
+// For files under 24MB: send directly to Groq.
+// For larger files: decode audio, split into clean AudioBuffers,
+// re-encode each as webm via MediaRecorder (compressed, valid container),
+// then transcribe sequentially with timestamp offsets.
+var GROQ_LIMIT = 24 * 1024 * 1024;
+var CHUNK_SECS = 600; // 10 minutes per chunk
 
 function transcribe(idx) {
   var key = localStorage.getItem('groq_key') || document.getElementById('groqKey').value.trim();
@@ -719,9 +719,9 @@ function transcribe(idx) {
   var rec = recList[idx];
   showProc('Preparing audio...');
 
-  if (rec.blob.size <= MAX_CHUNK_MB) {
+  if (rec.blob.size <= GROQ_LIMIT) {
     setProcLbl('Transcribing...');
-    sendChunkToGroq(key, rec.blob, rec.ext, 0).then(function(data) {
+    sendToGroq(key, rec.blob, 0).then(function(data) {
       setProcLbl('Processing...');
       processTranscript(data);
     }).catch(function(e) {
@@ -730,14 +730,14 @@ function transcribe(idx) {
       alert('Transcription error:\n' + e.message);
     });
   } else {
-    byteSplitTranscribe(key, rec);
+    setProcLbl('Large file — decoding audio...');
+    decodeAndChunk(key, rec);
   }
 }
 
-function sendChunkToGroq(key, blob, ext, offsetSecs) {
+function sendToGroq(key, blob, offsetSecs) {
   var formData = new FormData();
-  var filename = 'audio.' + (ext === 'ogg' ? 'ogg' : 'webm');
-  formData.append('file', blob, filename);
+  formData.append('file', blob, 'audio.webm');
   formData.append('model', 'whisper-large-v3-turbo');
   formData.append('response_format', 'verbose_json');
   formData.append('timestamp_granularities[]', 'segment');
@@ -767,51 +767,93 @@ function sendChunkToGroq(key, blob, ext, offsetSecs) {
   });
 }
 
-function byteSplitTranscribe(key, rec) {
-  // Calculate bytes-per-second from blob size and estimated duration.
-  // rec.dur is the recorded duration in seconds — use it for offset math.
-  var totalBytes = rec.blob.size;
-  var totalSecs  = rec.dur || 1;
-  var bytesPerSec = totalBytes / totalSecs;
+function decodeAndChunk(key, rec) {
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var tmpCtx = new AudioContext();
+    tmpCtx.decodeAudioData(e.target.result).then(function(audioBuffer) {
+      tmpCtx.close();
+      var totalSecs = audioBuffer.duration;
+      var numChunks = Math.ceil(totalSecs / CHUNK_SECS);
+      var sampleRate = audioBuffer.sampleRate;
+      var numCh = audioBuffer.numberOfChannels;
 
-  // How many seconds fit in MAX_CHUNK_MB?
-  var secsPerChunk = Math.floor(MAX_CHUNK_MB / bytesPerSec);
-  // Safety floor: at least 60s, ceiling: 600s (10 min)
-  secsPerChunk = Math.max(60, Math.min(600, secsPerChunk));
+      // Build chunk slices: each is an AudioBuffer covering CHUNK_SECS
+      var chunkBuffers = [];
+      for (var c = 0; c < numChunks; c++) {
+        var startSample = Math.floor(c * CHUNK_SECS * sampleRate);
+        var endSample   = Math.min(Math.floor((c + 1) * CHUNK_SECS * sampleRate), audioBuffer.length);
+        var len = endSample - startSample;
+        var buf = new AudioContext().createBuffer(numCh, len, sampleRate);
+        for (var ch = 0; ch < numCh; ch++) {
+          buf.copyToChannel(audioBuffer.getChannelData(ch).slice(startSample, endSample), ch);
+        }
+        chunkBuffers.push({ buf: buf, offsetSecs: c * CHUNK_SECS });
+      }
 
-  var numChunks = Math.ceil(totalSecs / secsPerChunk);
-  setProcLbl('Large file — transcribing chunk 1 of ' + numChunks + '...');
+      // Encode each chunk via MediaRecorder then transcribe sequentially
+      var allSegments = [];
+      var allText = '';
+      var chain = Promise.resolve();
 
-  var allSegments = [];
-  var allText = '';
-  var chain = Promise.resolve();
-
-  for (var ci = 0; ci < numChunks; ci++) {
-    (function(chunkIdx) {
-      var startSec  = chunkIdx * secsPerChunk;
-      var startByte = Math.floor(startSec * bytesPerSec);
-      var endByte   = chunkIdx === numChunks - 1
-        ? totalBytes
-        : Math.floor((startSec + secsPerChunk) * bytesPerSec);
-      var chunkBlob = rec.blob.slice(startByte, endByte, rec.mime || 'audio/webm');
-
-      chain = chain.then(function() {
-        setProcLbl('Transcribing chunk ' + (chunkIdx + 1) + ' of ' + numChunks + '...');
-        return sendChunkToGroq(key, chunkBlob, rec.ext, startSec);
-      }).then(function(data) {
-        if (data.segments) allSegments = allSegments.concat(data.segments);
-        if (data.text) allText += (allText ? ' ' : '') + data.text;
+      chunkBuffers.forEach(function(chunk, ci) {
+        chain = chain.then(function() {
+          setProcLbl('Encoding chunk ' + (ci + 1) + ' of ' + numChunks + '...');
+          return encodeBufferToBlob(chunk.buf);
+        }).then(function(blob) {
+          setProcLbl('Transcribing chunk ' + (ci + 1) + ' of ' + numChunks + '...');
+          return sendToGroq(key, blob, chunk.offsetSecs);
+        }).then(function(data) {
+          if (data.segments) allSegments = allSegments.concat(data.segments);
+          if (data.text) allText += (allText ? ' ' : '') + data.text;
+        });
       });
-    })(ci);
-  }
 
-  chain.then(function() {
-    setProcLbl('Processing...');
-    processTranscript({ segments: allSegments, text: allText });
-  }).catch(function(e) {
-    hideProc();
-    setStatus('transcription failed: ' + e.message);
-    alert('Transcription error:\n' + e.message);
+      chain.then(function() {
+        setProcLbl('Processing...');
+        processTranscript({ segments: allSegments, text: allText });
+      }).catch(function(e) {
+        hideProc();
+        setStatus('transcription failed: ' + e.message);
+        alert('Transcription error:\n' + e.message);
+      });
+
+    }).catch(function(err) {
+      tmpCtx.close();
+      hideProc();
+      setStatus('audio decode failed: ' + err.message);
+      alert('Could not decode audio for chunking.\nTry downloading the file and re-uploading via a converter.\n\nError: ' + err.message);
+    });
+  };
+  reader.readAsArrayBuffer(rec.blob);
+}
+
+function encodeBufferToBlob(audioBuffer) {
+  return new Promise(function(resolve, reject) {
+    // Pipe AudioBuffer into a MediaRecorder to get a valid compressed webm blob
+    var ctx = new AudioContext({ sampleRate: audioBuffer.sampleRate });
+    var dest = ctx.createMediaStreamDestination();
+    var src  = ctx.createBufferSource();
+    src.buffer = audioBuffer;
+    src.connect(dest);
+
+    var mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus' : 'audio/webm';
+    var mr = new MediaRecorder(dest.stream, { mimeType: mime, audioBitsPerSecond: 32000 });
+    var chunks = [];
+
+    mr.ondataavailable = function(e) { if (e.data.size > 0) chunks.push(e.data); };
+    mr.onstop = function() {
+      ctx.close();
+      resolve(new Blob(chunks, { type: mime }));
+    };
+    mr.onerror = function(e) { ctx.close(); reject(e.error); };
+
+    mr.start();
+    src.start();
+    // Stop recording when buffer finishes + small buffer
+    var durationMs = (audioBuffer.duration + 0.5) * 1000;
+    setTimeout(function() { mr.stop(); src.stop(); }, durationMs);
   });
 }
 
