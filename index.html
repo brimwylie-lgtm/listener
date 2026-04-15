@@ -702,11 +702,13 @@ function dlAudio(i) {
   setTimeout(function() { URL.revokeObjectURL(url); }, 2000);
 }
 
-// ── Transcription ────────────────────────────────────────────────────
-// Groq limit: 25MB per request. We chunk anything larger into
-// 8-minute segments, transcribe each, then merge with offset timestamps.
-var CHUNK_BYTES = 24 * 1024 * 1024; // 24MB safety margin
-var CHUNK_SECS  = 480;               // 8 minutes per chunk
+// ── Transcription ────────────────────────────────────
+// Strategy: slice the raw blob into byte chunks.
+// We calculate bytes-per-second from the file size and duration,
+// then slice at clean boundaries. Each chunk gets a timestamp offset
+// so the final merged transcript runs continuously from 0:00.
+// Max chunk size is 20MB — comfortably under Groq's 25MB hard limit.
+var MAX_CHUNK_MB = 20 * 1024 * 1024;
 
 function transcribe(idx) {
   var key = localStorage.getItem('groq_key') || document.getElementById('groqKey').value.trim();
@@ -717,8 +719,8 @@ function transcribe(idx) {
   var rec = recList[idx];
   showProc('Preparing audio...');
 
-  if (rec.blob.size <= CHUNK_BYTES) {
-    // Small enough — send directly
+  if (rec.blob.size <= MAX_CHUNK_MB) {
+    setProcLbl('Transcribing...');
     sendChunkToGroq(key, rec.blob, rec.ext, 0).then(function(data) {
       setProcLbl('Processing...');
       processTranscript(data);
@@ -728,9 +730,7 @@ function transcribe(idx) {
       alert('Transcription error:\n' + e.message);
     });
   } else {
-    // Large file — decode, slice into chunks, transcribe each, merge
-    setProcLbl('Large file detected — splitting into chunks...');
-    splitAndTranscribe(key, rec);
+    byteSplitTranscribe(key, rec);
   }
 }
 
@@ -755,12 +755,11 @@ function sendChunkToGroq(key, blob, ext, offsetSecs) {
     }
     return res.json();
   }).then(function(data) {
-    // Shift all segment timestamps by the chunk offset
     if (offsetSecs > 0 && data.segments) {
       data.segments = data.segments.map(function(s) {
         return Object.assign({}, s, {
-          start: s.start + offsetSecs,
-          end:   s.end   + offsetSecs
+          start: +(s.start + offsetSecs).toFixed(3),
+          end:   +(s.end   + offsetSecs).toFixed(3)
         });
       });
     }
@@ -768,141 +767,20 @@ function sendChunkToGroq(key, blob, ext, offsetSecs) {
   });
 }
 
-function splitAndTranscribe(key, rec) {
-  // Use AudioContext to decode the blob, then re-encode each chunk
-  // as a separate webm blob using MediaRecorder on an offline buffer.
-  // Fallback: if AudioContext decode fails, split by byte size with overlap warning.
-  var reader = new FileReader();
-  reader.onload = function(e) {
-    var arrayBuffer = e.target.result;
-    var audioCtxTemp = new AudioContext();
-    audioCtxTemp.decodeAudioData(arrayBuffer).then(function(audioBuffer) {
-      audioCtxTemp.close();
-      var totalSecs = audioBuffer.duration;
-      var numChunks = Math.ceil(totalSecs / CHUNK_SECS);
-      setProcLbl('Transcribing chunk 1 of ' + numChunks + '...');
-
-      // Build array of {blob, offsetSecs} for each chunk
-      var chunkPromises = [];
-      for (var c = 0; c < numChunks; c++) {
-        chunkPromises.push(extractChunkBlob(audioBuffer, c * CHUNK_SECS, Math.min((c + 1) * CHUNK_SECS, totalSecs)));
-      }
-
-      Promise.all(chunkPromises).then(function(chunkBlobs) {
-        // Transcribe sequentially to avoid rate limits
-        var allSegments = [];
-        var allText = '';
-        var chain = Promise.resolve();
-
-        chunkBlobs.forEach(function(chunkBlob, ci) {
-          chain = chain.then(function() {
-            setProcLbl('Transcribing chunk ' + (ci + 1) + ' of ' + chunkBlobs.length + '...');
-            return sendChunkToGroq(key, chunkBlob, 'webm', ci * CHUNK_SECS);
-          }).then(function(data) {
-            if (data.segments) allSegments = allSegments.concat(data.segments);
-            if (data.text) allText += (allText ? ' ' : '') + data.text;
-          });
-        });
-
-        chain.then(function() {
-          setProcLbl('Processing...');
-          processTranscript({ segments: allSegments, text: allText });
-        }).catch(function(e) {
-          hideProc();
-          setStatus('chunk transcription failed: ' + e.message);
-          alert('Transcription error:\n' + e.message);
-        });
-      });
-
-    }).catch(function(decodeErr) {
-      audioCtxTemp.close();
-      // AudioContext decode failed — fall back to byte-split with a warning
-      console.warn('Audio decode failed, using byte split:', decodeErr);
-      byteSplitTranscribe(key, rec);
-    });
-  };
-  reader.readAsArrayBuffer(rec.blob);
-}
-
-function extractChunkBlob(audioBuffer, startSec, endSec) {
-  return new Promise(function(resolve) {
-    var sampleRate = audioBuffer.sampleRate;
-    var startSample = Math.floor(startSec * sampleRate);
-    var endSample   = Math.floor(endSec   * sampleRate);
-    var length = endSample - startSample;
-    var numChannels = audioBuffer.numberOfChannels;
-
-    var offlineCtx = new OfflineAudioContext(numChannels, length, sampleRate);
-    var source = offlineCtx.createBufferSource();
-
-    // Copy the slice into a new buffer
-    var sliceBuffer = offlineCtx.createBuffer(numChannels, length, sampleRate);
-    for (var ch = 0; ch < numChannels; ch++) {
-      var channelData = audioBuffer.getChannelData(ch).subarray(startSample, endSample);
-      sliceBuffer.copyToChannel(channelData, ch);
-    }
-
-    source.buffer = sliceBuffer;
-    source.connect(offlineCtx.destination);
-    source.start();
-
-    offlineCtx.startRendering().then(function(renderedBuffer) {
-      // Convert rendered buffer to wav blob (simple, universally supported)
-      resolve(audioBufferToWavBlob(renderedBuffer));
-    });
-  });
-}
-
-function audioBufferToWavBlob(buffer) {
-  var numChannels = buffer.numberOfChannels;
-  var sampleRate  = buffer.sampleRate;
-  var numFrames   = buffer.length;
-  var bitDepth    = 16;
-  var bytesPerSample = bitDepth / 8;
-  var blockAlign  = numChannels * bytesPerSample;
-  var dataSize    = numFrames * blockAlign;
-  var bufferSize  = 44 + dataSize;
-  var arrayBuf    = new ArrayBuffer(bufferSize);
-  var view        = new DataView(arrayBuf);
-
-  function writeStr(offset, str) {
-    for (var i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
-  }
-
-  writeStr(0,  'RIFF');
-  view.setUint32(4,  36 + dataSize, true);
-  writeStr(8,  'WAVE');
-  writeStr(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1,  true);  // PCM
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * blockAlign, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, bitDepth,   true);
-  writeStr(36, 'data');
-  view.setUint32(40, dataSize, true);
-
-  var offset = 44;
-  for (var i = 0; i < numFrames; i++) {
-    for (var ch = 0; ch < numChannels; ch++) {
-      var sample = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i]));
-      view.setInt16(offset, sample < 0 ? sample * 32768 : sample * 32767, true);
-      offset += 2;
-    }
-  }
-
-  return new Blob([arrayBuf], { type: 'audio/wav' });
-}
-
 function byteSplitTranscribe(key, rec) {
-  // Last-resort fallback: split blob by bytes at chunk boundaries
-  // Less accurate at boundaries but better than failing completely
-  var blob = rec.blob;
-  var totalSize = blob.size;
-  var numChunks = Math.ceil(totalSize / CHUNK_BYTES);
-  var approxSecsPerChunk = CHUNK_SECS;
-  setProcLbl('Transcribing chunk 1 of ' + numChunks + ' (byte split)...');
+  // Calculate bytes-per-second from blob size and estimated duration.
+  // rec.dur is the recorded duration in seconds — use it for offset math.
+  var totalBytes = rec.blob.size;
+  var totalSecs  = rec.dur || 1;
+  var bytesPerSec = totalBytes / totalSecs;
+
+  // How many seconds fit in MAX_CHUNK_MB?
+  var secsPerChunk = Math.floor(MAX_CHUNK_MB / bytesPerSec);
+  // Safety floor: at least 60s, ceiling: 600s (10 min)
+  secsPerChunk = Math.max(60, Math.min(600, secsPerChunk));
+
+  var numChunks = Math.ceil(totalSecs / secsPerChunk);
+  setProcLbl('Large file — transcribing chunk 1 of ' + numChunks + '...');
 
   var allSegments = [];
   var allText = '';
@@ -910,12 +788,16 @@ function byteSplitTranscribe(key, rec) {
 
   for (var ci = 0; ci < numChunks; ci++) {
     (function(chunkIdx) {
+      var startSec  = chunkIdx * secsPerChunk;
+      var startByte = Math.floor(startSec * bytesPerSec);
+      var endByte   = chunkIdx === numChunks - 1
+        ? totalBytes
+        : Math.floor((startSec + secsPerChunk) * bytesPerSec);
+      var chunkBlob = rec.blob.slice(startByte, endByte, rec.mime || 'audio/webm');
+
       chain = chain.then(function() {
         setProcLbl('Transcribing chunk ' + (chunkIdx + 1) + ' of ' + numChunks + '...');
-        var start = chunkIdx * CHUNK_BYTES;
-        var end   = Math.min(start + CHUNK_BYTES, totalSize);
-        var chunkBlob = blob.slice(start, end, rec.mime || 'audio/webm');
-        return sendChunkToGroq(key, chunkBlob, rec.ext, chunkIdx * approxSecsPerChunk);
+        return sendChunkToGroq(key, chunkBlob, rec.ext, startSec);
       }).then(function(data) {
         if (data.segments) allSegments = allSegments.concat(data.segments);
         if (data.text) allText += (allText ? ' ' : '') + data.text;
